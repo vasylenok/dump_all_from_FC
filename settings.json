@@ -1,5 +1,5 @@
 {
-  "STM32_Cube_Prog_path": "D:\\Programs\\STM32CubeProgrammer\\bin",
-  "Path_to_save_the_files": "C:\\Users\\Lesha\\Desktop\\Доки\\folder1",
+  "STM32_Cube_Prog_path": "C:\\Program Files\\STM32CubeProgrammer\\bin",
+  "Path_to_save_the_files": "C:\\Desktop\\DUMP",
   "Port": "COM30"
 }

@@ -2,12 +2,22 @@ import json
 import os
 import subprocess
 import time
+import re
+import sys
 try:
     import serial
 except ImportError:
     print('Need to install pyserial, procedure begins')
     subprocess.check_call(['pip', 'install', 'pyserial'])
     import serial
+
+from contextlib import contextmanager
+
+
+def write_to_file(data:str, path:str):
+    with open(path, 'w', encoding='utf-8') as file:
+        file.write(data)
+    print(f'\033[92mCreated file {path}\033[0m')
 
 
 class Betaflight_dump():
@@ -21,30 +31,74 @@ class Betaflight_dump():
             data = json.load(settings)
         self.port = data.get('Port')
         self.path_to_save = data.get('Path_to_save_the_files')
+        self.wait_for_port()
+        self.board_name = None
+        self.make_spec_file()
+
+    @contextmanager
+    def cli(self):
+        port = serial.Serial(self.port, self.BAUD_RATE)
+        self.enter_cli(port)
+        yield port
+        self.exit_cli(port)
+
+    def wait_for_port(self, wait_time_sec=180, check_interval_sec=1):
+        elapsed_time = 0
+        while elapsed_time < wait_time_sec:
+            try:
+                ser = serial.Serial(self.port, timeout=1)
+                print(f"\033[92mPort {self.port} is available.\033[0m")
+                del ser
+                return
+            except serial.SerialException:
+                if not elapsed_time: print(f"\033[33mPort {self.port} is not available. Please connect the USB to FC. "
+                                       f"Waited for {wait_time_sec/60} minutes.\033[0m")
+            time.sleep(check_interval_sec)
+            elapsed_time += check_interval_sec
+        print(f"\033[31mPort {self.port} did not appear after {wait_time_sec // 60} minutes. Exiting.\033[0m")
+        sys.exit(1)
+
+    def make_spec_file(self):
+        with self.cli() as port:
+            ver_from_beta = self._perform_betaflight_cli_command(port, 'version')
+        processor = re.search(r'STM32F\d+', ver_from_beta).group()
+        beta_version = re.search(r'(\d+\.\d+\.\d+)', ver_from_beta).group()
+        manuf = re.search(r'manufacturer_id:\s*([A-Z0-9]+)', ver_from_beta).group(1)
+        self.board_name = re.search(r'board_name:\s*([A-Z0-9_]+)', ver_from_beta).group(1)
+        spec = {
+            'Processor': processor,
+            'Betaflight Version': beta_version,
+            'Target': self.board_name,
+            'Manufacturer': manuf,
+            'Board_name': self.board_name,
+        }
+        path = self.check_folder_does_exist_and_finish_final_path(f'FC_{self.board_name}_Specification.json')
+        with open(path, 'w') as file:
+            json.dump(spec, file, indent=4)
+        print(f'\033[92mCreated file {path}\033[0m')
+        time.sleep(1)
+
 
     def check_folder_does_exist_and_finish_final_path(self, file_name:str):
         if not os.path.exists(self.path_to_save):
             os.makedirs(self.path_to_save)
         return os.path.join(self.path_to_save, file_name)
 
-    def write_to_file(self, data:str, path:str):
-        with open(path, 'w', encoding='utf-8') as file:
-            file.write(data)
-        print(f'\033[92mCreated file {path}\033[0m')
-
-    def get_betaflight_cli_by_command(self, command:str):
-        path = self.check_folder_does_exist_and_finish_final_path(f'betaflight_{command.replace(' ', '_')}.txt')
-        port = serial.Serial(self.port, self.BAUD_RATE)
-        response = ''
-        counter_no_data = 0
+    def enter_cli(self, port:serial.Serial):
         print('Enter Betaflight CLI')
         port.reset_input_buffer()
-        port.write(b'#')    #enter debug
+        port.write(b'#')  # enter debug
         time.sleep(self.QUICK_TIMEOUT)
         res = port.read(port.in_waiting).decode()
         if 'Entering CLI Mode' in res:
             print('\033[92mBetaflight CLI Mode Activated\033[0m')
+        else:
+            print('\033[31mBetaflight CLI Mode NOT Activated\033[0m')
         time.sleep(1)
+
+    def _perform_betaflight_cli_command(self, port:serial.Serial,  command:str) -> str:
+        response = ''
+        counter_no_data = 0
         print(f'Perform command #{command}')
         byte_command = bytes(f'{command}\r', encoding='utf-8')
         port.write(byte_command)
@@ -56,14 +110,22 @@ class Betaflight_dump():
             else:
                 counter_no_data += 1
                 time.sleep(self.QUICK_TIMEOUT)
+        response = response[len(command + '\r\n'):]  # remove command from begin
+        return response
+
+    def exit_cli(self, port:serial.Serial):
         port.write(b"exit\r\n")
         time.sleep(1)
         port.reset_output_buffer()
         port.reset_input_buffer()
         port.close()
-        response = response[len(command + '\r\n'):]   #remove command from begin
-        self.write_to_file(response, path)
         self.refresh_port()
+
+    def get_betaflight_cli_by_command(self, command:str):
+        path = self.check_folder_does_exist_and_finish_final_path(f'Betaflight_{self.board_name}_{command.replace(' ', '_')}.txt')
+        with self.cli() as port:
+            response = self._perform_betaflight_cli_command(port, command)
+        write_to_file(response, path)
 
     def refresh_port(self):
         try:
@@ -112,7 +174,7 @@ class STM_dump(Betaflight_dump):
                 no_device = True
                 break
         if no_device:
-            print('No STM32 device in DFU mode:\n')
+            print('\033[33mNo STM32 device in DFU mode:\n\033[0m')
         elif dfu_quantity and len(dfu_ports) == dfu_quantity:
             if dfu_quantity > 1:
                 print(f'Found {dfu_quantity} devices in DFU mode:\n')
@@ -123,7 +185,7 @@ class STM_dump(Betaflight_dump):
                 print(f'Found {dfu_quantity} device in DFU mode: \033[92m{dfu_ports[0]}\033[0m\n')
                 res = dfu_ports[0]
         else:
-            print('Something went wrong...')
+            print('\033[31mSomething went wrong...\033[0m')
         dfu.terminate()
         dfu.wait()
         return res
@@ -132,7 +194,7 @@ class STM_dump(Betaflight_dump):
         self.enable_dfu()
         dfu_port = self.check_dfu()
         print('Getting dump from FC')
-        file_path = self.check_folder_does_exist_and_finish_final_path('fc_dump.bin')
+        file_path = self.check_folder_does_exist_and_finish_final_path(f'fc_{self.board_name}_dump.bin')
         if dfu_port:
             dump = subprocess.Popen([self.stm_path, '-c', f'port={dfu_port}', '-u', '0x08000000 0x100000', file_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             timeout = time.time() + 60
@@ -142,7 +204,7 @@ class STM_dump(Betaflight_dump):
                 print(line)
                 if 'Time elapsed during read operation'  in line:
                     break
-            print(f'Your FC .bin dump was saved here: {file_path}')
+            print(f'\033[92mYour FC .bin dump was saved here: {file_path}\033[0m')
             dump.terminate()
             dump.wait()
             print('\033[92mAll job is Done, please PowerUp your FC for exit from DFU\033[0m')
@@ -153,7 +215,9 @@ class STM_dump(Betaflight_dump):
 if __name__ == '__main__':
     beta = Betaflight_dump()
     beta.get_betaflight_cli_by_command('dump all')
+    beta.get_betaflight_cli_by_command('diff all')
     beta.get_betaflight_cli_by_command('vtxtable')
+    beta.get_betaflight_cli_by_command('vtx')
     stm = STM_dump()
     stm.run()
     input('Press any Key to exit...')
