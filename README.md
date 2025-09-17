@@ -44,6 +44,10 @@ The script automatically does a full dump from FC, including Betaflight command 
   "Port": "COM30"
   }
   ```
+  5. You can **Add\Remove** Betaflight commands which would be performed in `BETAFLIGHT_COMMANDS` list:
+        ``` python
+        BETAFLIGHT_COMMANDS = ['dump all', 'diff all', 'vtx', 'vtxtable']
+        ```
 
 ## Running 
   1. Download  `dump_all.py` and `settings.json` or clone the repository
