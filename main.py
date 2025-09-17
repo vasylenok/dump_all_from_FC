@@ -12,7 +12,9 @@ except ImportError:
     import serial
 
 from contextlib import contextmanager
+from datetime import datetime
 
+BETAFLIGHT_COMMANDS = ['dump all', 'diff all', 'vtx', 'vtxtable']
 
 def write_to_file(data:str, path:str):
     with open(path, 'w', encoding='utf-8') as file:
@@ -26,9 +28,10 @@ class Betaflight_dump():
     BAUD_RATE = 115200
     QUICK_TIMEOUT = 0.2
 
-    def __init__(self):
+    def __init__(self, current_time):
         with open('settings.json', encoding='utf-8') as settings:
             data = json.load(settings)
+        self.time = current_time
         self.port = data.get('Port')
         self.path_to_save = data.get('Path_to_save_the_files')
         self.wait_for_port()
@@ -72,11 +75,13 @@ class Betaflight_dump():
             'Manufacturer': manuf,
             'Board_name': self.board_name,
         }
+        self.path_to_save = os.path.join(self.path_to_save, f'{self.board_name}.{self.time}')
         path = self.check_folder_does_exist_and_finish_final_path(f'FC_{self.board_name}_Specification.json')
-        with open(path, 'w') as file:
-            json.dump(spec, file, indent=4)
-        print(f'\033[92mCreated file {path}\033[0m')
-        time.sleep(1)
+        if not os.path.exists(path):
+            with open(path, 'w') as file:
+                json.dump(spec, file, indent=4)
+            print(f'\033[92mCreated file {path}\033[0m')
+            time.sleep(1)
 
 
     def check_folder_does_exist_and_finish_final_path(self, file_name:str):
@@ -144,8 +149,8 @@ class Betaflight_dump():
         del ser
 
 class STM_dump(Betaflight_dump):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, curr_time):
+        super().__init__(curr_time)
         with open('settings.json', encoding='utf-8') as settings:
             data = json.load(settings)
         self.stm_path = os.path.join(data.get('STM32_Cube_Prog_path'), 'STM32_Programmer_CLI.exe')
@@ -191,33 +196,34 @@ class STM_dump(Betaflight_dump):
         return res
 
     def run(self):
+        if self.stm_path == 'STM32_Programmer_CLI.exe': return # skip stm dump if no need
         self.enable_dfu()
         dfu_port = self.check_dfu()
         print('Getting dump from FC')
-        file_path = self.check_folder_does_exist_and_finish_final_path(f'fc_{self.board_name}_dump.bin')
-        if dfu_port:
-            dump = subprocess.Popen([self.stm_path, '-c', f'port={dfu_port}', '-u', '0x08000000 0x100000', file_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            timeout = time.time() + 60
-            while time.time() < timeout:
-                line = dump.stdout.readline()
-                line = line.decode('utf-8', errors='ignore')
-                print(line)
-                if 'Time elapsed during read operation'  in line:
-                    break
-            print(f'\033[92mYour FC .bin dump was saved here: {file_path}\033[0m')
-            dump.terminate()
-            dump.wait()
-            print('\033[92mAll job is Done, please PowerUp your FC for exit from DFU\033[0m')
-        else:
-            print('No DFU, No your Dump!')
+        for file_format in ['bin', 'hex']:
+            if dfu_port:
+                file_path = self.check_folder_does_exist_and_finish_final_path(f'fc_{self.board_name}_dump.{file_format}')
+                dump = subprocess.Popen([self.stm_path, '-c', f'port={dfu_port}', '-u', '0x08000000 0x100000', file_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                timeout = time.time() + 60
+                while time.time() < timeout:
+                    line = dump.stdout.readline()
+                    line = line.decode('utf-8', errors='ignore')
+                    print(line)
+                    if 'Time elapsed during read operation'  in line:
+                        break
+                print(f'\033[92mYour FC .{file_format} dump was saved here: {file_path}\033[0m')
+                dump.terminate()
+                dump.wait()
+            else:
+                print('No DFU, No your Dump!')
+        if dfu_port: print('\033[92mAll job is Done, please PowerUp your FC for exit from DFU\033[0m')
 
 
 if __name__ == '__main__':
-    beta = Betaflight_dump()
-    beta.get_betaflight_cli_by_command('dump all')
-    beta.get_betaflight_cli_by_command('diff all')
-    beta.get_betaflight_cli_by_command('vtxtable')
-    beta.get_betaflight_cli_by_command('vtx')
-    stm = STM_dump()
+    time_now = datetime.now().strftime("%d_%m_%y(%H_%M_%S)")
+    beta = Betaflight_dump(time_now)
+    for command in BETAFLIGHT_COMMANDS:
+        beta.get_betaflight_cli_by_command(command)
+    stm = STM_dump(time_now)
     stm.run()
     input('Press any Key to exit...')
