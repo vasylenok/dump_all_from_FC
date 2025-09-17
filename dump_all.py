@@ -14,6 +14,7 @@ except ImportError:
 from contextlib import contextmanager
 from datetime import datetime
 
+os.system('')
 BETAFLIGHT_COMMANDS = ['dump all', 'diff all', 'vtx', 'vtxtable']
 
 def write_to_file(data:str, path:str):
@@ -211,7 +212,7 @@ class STM_dump(Betaflight_dump):
                     print(line)
                     if 'Time elapsed during read operation'  in line:
                         break
-                print(f'\033[92mYour FC .{file_format} dump was saved here: {file_path}\033[0m')
+                print(f'\033[92mYour FC .{file_format} dump was saved here: {file_path}\033[0m\n')
                 dump.terminate()
                 dump.wait()
             else:
